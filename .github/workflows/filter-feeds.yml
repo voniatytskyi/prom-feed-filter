@@ -1,0 +1,67 @@
+name: Filter supplier feeds
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # щогодини о хх:17 (UTC)
+  workflow_dispatch:         # ручний запуск кнопкою Run workflow
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Підтягуємо вже опубліковані очищені фіди. Якщо постачальник зараз віддасть
+      # битий файл, скрипт не перезапише старий — і Prom продовжить брати попередню версію.
+      - name: Restore previous output
+        env:
+          FEEDS: ${{ secrets.FEEDS }}
+        run: |
+          mkdir -p output
+          BASE="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+          echo "$FEEDS" | grep -v '^\s*#' | awk 'NF{print $1}' | while read -r name; do
+            curl -fsSL -m 120 -o "output/$name.xml" "$BASE/$name.xml" || rm -f "output/$name.xml"
+          done
+          ls -la output
+
+      - name: Filter feeds
+        env:
+          FEEDS: ${{ secrets.FEEDS }}
+        run: |
+          python filter_feeds.py || echo "::warning::Деякі фіди не оновлено — опубліковано попередню версію"
+          touch output/.nojekyll
+          test -n "$(ls output/*.xml 2>/dev/null)"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: output
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  # GitHub вимикає розклад у репозиторіях без активності 60 днів — це не дає йому вимкнутись.
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: liskin/gh-workflow-keepalive@v1
