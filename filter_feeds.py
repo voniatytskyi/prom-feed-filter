@@ -160,7 +160,24 @@ def filter_feed(xml: str):
         return block
 
     out = ITEM_RE.sub(repl, xml)
-    return out, total, removed
+    return drop_empty_categories(out), total, removed
+
+
+CAT_LINE_RE = re.compile(r'[ \t]*<category\s+id="([^"]+)"([^>]*)>.*?</category>[ \t]*\r?\n?', re.S)
+PARENT_RE = re.compile(r'parentId="([^"]+)"')
+CATID_RE = re.compile(r"<categoryId>\s*([^<\s]+)\s*</categoryId>")
+
+
+def drop_empty_categories(xml: str) -> str:
+    """Прибирає категорії, у яких не лишилося жодного товару («Уцінка», «Gucci» тощо),
+    щоб Prom не створював порожні групи. Батьківські категорії непорожніх груп лишаються."""
+    parents = {cid: (PARENT_RE.search(attrs) or [None, None])[1] for cid, attrs in CAT_LINE_RE.findall(xml)}
+    keep = set()
+    for cid in set(CATID_RE.findall(xml)):
+        while cid and cid not in keep:
+            keep.add(cid)
+            cid = parents.get(cid)
+    return CAT_LINE_RE.sub(lambda m: m.group(0) if m.group(1) in keep else "", xml)
 
 
 def download(url: str, tries: int = 3) -> str:
