@@ -85,13 +85,29 @@ def load_rules():
 EX_CODES, EX_BRANDS, EX_PHRASES = load_rules()
 
 
-def extra_reason(name: str, code: str, desc: str) -> str:
+GENERIC_CAT_WORDS = re.compile(r"літо|зима|sale|сумки|bags|взуття|одяг|premium|lux", re.I)
+LETTERS = re.compile(r"[a-zа-яіїєґё]", re.I)
+
+
+def is_brand_category(cat: str, brand_re) -> bool:
+    """Категорія присвячена лише цьому бренду («Gucci», «💎HERMES💎», «ЛІТО HERMES»),
+    а не змішана («•Hérmes • PRADA • GUCCI • CELINE •»)."""
+    if not brand_re.search(cat):
+        return False
+    rest = GENERIC_CAT_WORDS.sub(" ", brand_re.sub(" ", cat))
+    return not LETTERS.search(rest)
+
+
+def extra_reason(name: str, code: str, desc: str, cat: str = "") -> str:
     tail = CODE_TAIL.search(code)
     if code.lower() in EX_CODES or (tail and tail.group(1) in EX_CODES):
         return f"у списку виключень: {code}"
     for r in EX_BRANDS:
         if r.search(name):
             return f"бренд зі скаргою: {r.search(name).group(0)}"
+        # Назви на кшталт «Chep Beige», «Trainer High» без бренду — бренд видно лише з категорії
+        if cat and is_brand_category(cat, r):
+            return f"бренд зі скаргою (категорія): {cat}"
     for r in EX_PHRASES:
         m = r.search(name) or r.search(desc)
         if m:
@@ -118,7 +134,7 @@ def first(tag: str, block: str) -> str:
     return html.unescape(m.group(1)).strip() if m else ""
 
 
-def reason(block: str, bad_cats: dict) -> str:
+def reason(block: str, bad_cats: dict, cats: dict = None) -> str:
     """Повертає причину видалення або '' якщо товар залишається."""
     cat_id = first("categoryId", block)
     if cat_id in bad_cats:
@@ -135,7 +151,7 @@ def reason(block: str, bad_cats: dict) -> str:
     desc = first("description", block)
     if BAD_DESC.search(clean(desc)):
         return "опис"
-    return extra_reason(name, code, html.unescape(desc))
+    return extra_reason(name, code, html.unescape(desc), (cats or {}).get(cat_id, ""))
 
 
 def filter_feed(xml: str):
@@ -147,7 +163,7 @@ def filter_feed(xml: str):
         nonlocal total
         total += 1
         block = m.group(0)
-        why = reason(block, bad_cats)
+        why = reason(block, bad_cats, cats)
         if why:
             idm = ATTR_ID.search(block)
             removed.append({
